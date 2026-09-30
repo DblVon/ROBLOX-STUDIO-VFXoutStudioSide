@@ -1,11 +1,13 @@
+# -- || Made by @dbl_von || --
 import os
 import time
+import json
 import requests
 from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-# CONFIGURAÇÃO DO ROBLOX (Puxa das variáveis do Render)
+# CONFIGURAÇÃO DO ROBLOX
 ROBLOX_API_KEY = os.environ.get("ROBLOX_API_KEY")
 
 @app.route("/", methods=["GET"])
@@ -21,10 +23,8 @@ def gerar_textura():
         return jsonify({"sucesso": False, "erro": "Prompt vazio"}), 400
 
     try:
-        # ---- PASSO 1: Chamada Oficial à API da Pollinations ----
+        # ---- PASSO 1: Baixando Imagem da IA (Pollinations) ----
         prompt_formatado = f"{prompt_usuario}, black background, texture map, video game vfx asset, square tileable"
-        
-        # Estrutura de URL recomendada pela documentação oficial da IA
         url_ia = f"https://image.pollinations.ai/prompt/{requests.utils.quote(prompt_formatado)}?width=512&height=512&seed=42"
         
         resposta_ia = requests.get(url_ia, timeout=15)
@@ -33,8 +33,8 @@ def gerar_textura():
             
         imagem_bytes = resposta_ia.content
 
-        # ---- PASSO 2: Envio Oficial para a Assets API da Open Cloud ----
-        url_roblox_upload = "https://roblox.com"
+        # ---- PASSO 2: Envio para a Assets API do Roblox ----
+        url_roblox_upload = "https://apis.roblox.com/assets/v1/assets"
         headers_roblox = {"x-api-key": ROBLOX_API_KEY}
         
         json_meta = {
@@ -43,14 +43,13 @@ def gerar_textura():
             "description": f"Gerado por IA. Prompt: {prompt_usuario}",
             "creationContext": {
                 "creator": {
-                    "userId": "3410584211" # Seu ID de Usuário do Roblox verificado
+                    "userId": "3410584211" # Seu ID de usuario
                 }
             }
         }
 
-        # Formatação multipart obrigatória para envio de arquivos binários (.png) no Roblox
         arquivos = {
-            'request': (None, requests.utils.to_key_val_list(json_meta), 'application/json'),
+            'request': (None, json.dumps(json_meta), 'application/json'),
             'fileContent': ('textura.png', imagem_bytes, 'image/png')
         }
 
@@ -60,7 +59,7 @@ def gerar_textura():
             return jsonify({"sucesso": False, "erro": f"Roblox recusou o envio. Status: {resposta_roblox.status_code} - {resposta_roblox.text}"}), 500
             
         dados_operacao = resposta_roblox.json()
-        operation_path = dados_operacao.get("path") # Formato retornado: "operations/XXXX-XXXX"
+        operation_path = dados_operacao.get("path")
         
         if not operation_path:
             asset_id = dados_operacao.get("assetId")
@@ -68,12 +67,10 @@ def gerar_textura():
                 return jsonify({"sucesso": True, "assetId": str(asset_id)})
             return jsonify({"sucesso": False, "erro": "Roblox aceitou, mas nao gerou codigo de rastreamento."}), 500
 
-        # ---- PASSO 3: Consulta Segura ao Caminho da Operação ----
-        # Sem usar concatenações que gerem strings ilegais como ".." para a API do Roblox
-        url_checagem = f"https://roblox.com{operation_path}"
+        # ---- PASSO 3: Consulta ao Caminho da Operação ----
+        url_checagem = f"https://apis.roblox.com/assets/v1/{operation_path}"
         asset_id = None
         
-        # Loop de polling recomendado para monitorar a fila de moderação do Roblox
         for _ in range(10):
             time.sleep(2)
             status_resposta = requests.get(url_checagem, headers=headers_roblox, timeout=10)

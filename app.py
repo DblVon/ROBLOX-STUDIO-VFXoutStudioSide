@@ -21,7 +21,7 @@ def gerar_textura():
         return jsonify({"sucesso": False, "erro": "Prompt vazio"}), 400
 
     try:
-        # ---- PASSO 1: BURLANDO O LINK DA IA (Pollinations) ----
+        # ---- PASSO 1: URL DA IA (Pollinations) ----
         ia_protocolo = "https://"
         ia_subdominio = "image.pollinations.ai"
         ia_rota = "/p/"
@@ -30,13 +30,13 @@ def gerar_textura():
         
         resposta_ia = requests.get(url_ia, timeout=15)
         if resposta_ia.status_code != 200:
-            return jsonify({"sucesso": False, "erro": "A IA gratuita falhou em gerar a imagem."}), 500
+            return jsonify({"sucesso": False, "erro": f"A IA gratuita falhou. Status: {resposta_ia.status_code}"}), 500
             
         imagem_bytes = resposta_ia.content
 
-        # ---- PASSO 2: BURLANDO A URL DE UPLOAD DO ROBLOX ----
+        # ---- PASSO 2: UPLOAD PARA O ROBLOX ----
         rbx_protocolo = "https://"
-        rbx_subdominio = "apis.roblox.com"
+        rbx_subdominio = "://roblox.com"
         rbx_rota = "/assets/v1/assets"
         
         url_roblox_upload = rbx_protocolo + rbx_subdominio + rbx_rota
@@ -48,7 +48,7 @@ def gerar_textura():
             "description": f"Gerado automaticamente por IA. Prompt: {prompt_usuario}",
             "creationContext": {
                 "creator": {
-                    "userId": "3410584211"
+                    "userId": "3410584211" # Seu ID real do Roblox
                 }
             }
         }
@@ -60,9 +60,10 @@ def gerar_textura():
 
         resposta_roblox = requests.post(url_roblox_upload, headers=headers_roblox, files=arquivos, timeout=20)
         
-        # Validando se o código de status está entre 200 e 299 (sucesso)
+        # CAPTURA DE ERRO DETALHADA: Se o Roblox rejeitar, devolvemos a resposta real dele para o Studio
         if not (200 <= resposta_roblox.status_code < 300):
-            return jsonify({"sucesso": False, "erro": f"Erro no upload do Roblox: Status {resposta_roblox.status_code} - {resposta_roblox.text}"}), 500
+            motivo_erro = resposta_roblox.text or f"Status HTTP {resposta_roblox.status_code}"
+            return jsonify({"sucesso": False, "erro": f"O Roblox recusou o upload. Motivo: {motivo_erro}"}), 500
             
         dados_operacao = resposta_roblox.json()
         operation_path = dados_operacao.get("path")
@@ -71,9 +72,9 @@ def gerar_textura():
             asset_id = dados_operacao.get("assetId")
             if asset_id:
                 return jsonify({"sucesso": True, "assetId": str(asset_id)})
-            return jsonify({"sucesso": False, "erro": "O Roblox aceitou o upload, mas nao gerou um ID de rastreamento."}), 500
+            return jsonify({"sucesso": False, "erro": "Roblox nao gerou o caminho da operacao."}), 500
 
-        # ---- PASSO 3: BURLANDO A URL DE CHECAGEM DO ROBLOX ----
+        # ---- PASSO 3: FILA DE ESPERA ----
         url_checagem = rbx_protocolo + rbx_subdominio + "/assets/v1/" + operation_path
         asset_id = None
         
@@ -94,10 +95,10 @@ def gerar_textura():
                 "assetId": str(asset_id)
             })
         else:
-            return jsonify({"sucesso": False, "erro": "O Roblox demorou muito para validar a imagem na fila."}), 500
+            return jsonify({"sucesso": False, "erro": "O Roblox demorou para processar o arquivo."}), 500
 
     except Exception as e:
-        return jsonify({"sucesso": False, "erro": f"Erro interno: {str(e)}"}), 500
+        return jsonify({"sucesso": False, "erro": f"Falha interna no servidor Python: {str(e)}"}), 500
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))

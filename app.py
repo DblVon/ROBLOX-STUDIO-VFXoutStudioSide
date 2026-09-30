@@ -7,7 +7,7 @@ import random
 import uuid
 import requests
 from io import BytesIO
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter, ImageEnhance, ImageOps, ImageChops
 from flask import Flask, request, jsonify, Response
 
 app = Flask(__name__)
@@ -15,6 +15,7 @@ app = Flask(__name__)
 # CONFIGURAÇÃO DO ROBLOX
 ROBLOX_API_KEY = os.environ.get("ROBLOX_API_KEY")
 MODELOS_PERMITIDOS = ("flux", "turbo")
+EFEITOS = ("crescer", "girar", "pulsar", "dissolver")
 
 def cor_hex(valor, padrao=(0, 200, 255)):
     try:
@@ -120,12 +121,61 @@ def gerar_flipbook(estilo="flare", cor=(0, 200, 255), grade=4):
     folha.save(saida, format="PNG")
     return saida.getvalue()
 
+def gerar_flipbook_ia(prompt_usuario, efeito="crescer", grade=4, modelo="flux", seed=None):
+    grade = grade if grade in (2, 4, 8) else 4
+    efeito = efeito if efeito in EFEITOS else "crescer"
+
+    imagem_bytes, status, seed = baixar_imagem_limpa(prompt_usuario, modelo, seed)
+    if imagem_bytes is None:
+        return None, status, seed
+
+    tamanho = 512 // grade
+    base = Image.open(BytesIO(imagem_bytes)).convert("RGB").resize((tamanho, tamanho), Image.LANCZOS)
+
+    mascara = ImageOps.invert(Image.radial_gradient("L")).point(lambda v: min(255, v * 2)).resize((tamanho, tamanho))
+    base = ImageChops.multiply(base, Image.merge("RGB", (mascara, mascara, mascara)))
+
+    folha = Image.new("RGB", (grade * tamanho, grade * tamanho), (0, 0, 0))
+    total = grade * grade
+
+    for i in range(total):
+        t = i / (total - 1)
+        escala, angulo, desfoque = 1.0, 0, 0
+        brilho = min(1.0, (1 - t) * 2.5)
+
+        if efeito == "crescer":
+            escala = 0.3 + t * 1.0
+        elif efeito == "girar":
+            angulo = t * 180
+        elif efeito == "pulsar":
+            escala = 0.8 + 0.3 * abs(math.sin(t * math.pi * 2))
+        elif efeito == "dissolver":
+            escala = 1.0 + t * 0.3
+            brilho = 1 - t
+            desfoque = t * 4
+
+        quadro = base.rotate(angulo, resample=Image.BICUBIC) if angulo else base.copy()
+        lado = max(2, int(tamanho * escala))
+        quadro = quadro.resize((lado, lado), Image.LANCZOS)
+
+        tela = Image.new("RGB", (tamanho, tamanho), (0, 0, 0))
+        tela.paste(quadro, ((tamanho - lado) // 2, (tamanho - lado) // 2))
+        tela = ImageEnhance.Brightness(tela).enhance(max(0.0, brilho))
+        if desfoque > 0:
+            tela = tela.filter(ImageFilter.GaussianBlur(desfoque))
+
+        folha.paste(tela, ((i % grade) * tamanho, (i // grade) * tamanho))
+
+    saida = BytesIO()
+    folha.save(saida, format="PNG")
+    return saida.getvalue(), 200, seed
+
 def subir_roblox(imagem_bytes, nome, descricao):
     url_roblox_upload = "https://apis.roblox.com/assets/v1/assets"
     headers_roblox = {"x-api-key": ROBLOX_API_KEY}
 
     json_meta = {
-        "assetType": "Decal",
+        "assetType": "Image",
         "displayName": nome,
         "description": descricao,
         "creationContext": {
@@ -210,6 +260,30 @@ def flipbook_preview():
         print(f"ERRO interno: {str(e)}", flush=True)
         return jsonify({"sucesso": False, "erro": f"Erro interno no servidor Python: {str(e)}"}), 500
 
+@app.route("/flipbook-ia-preview", methods=["GET"])
+def flipbook_ia_preview():
+    prompt_usuario = request.args.get("prompt")
+
+    if not prompt_usuario:
+        return jsonify({"sucesso": False, "erro": "Prompt vazio"}), 400
+
+    try:
+        imagem_bytes, status, seed = gerar_flipbook_ia(
+            prompt_usuario,
+            request.args.get("efeito", "crescer"),
+            int(request.args.get("grade", 4)),
+            request.args.get("modelo", "flux"),
+            request.args.get("seed")
+        )
+        if imagem_bytes is None:
+            return jsonify({"sucesso": False, "erro": f"A IA Pollinations falhou. Status: {status}"}), 500
+        resposta = Response(imagem_bytes, mimetype="image/png")
+        resposta.headers["X-Seed"] = str(seed)
+        return resposta
+    except Exception as e:
+        print(f"ERRO interno: {str(e)}", flush=True)
+        return jsonify({"sucesso": False, "erro": f"Erro interno no servidor Python: {str(e)}"}), 500
+
 @app.route("/gerar-textura", methods=["POST"])
 def gerar_textura():
     dados = request.json or {}
@@ -232,6 +306,18 @@ def gerar_textura():
             imagem_bytes = gerar_flipbook(estilo, cor, grade)
             nome = nome_unico("IA_VFX_Flipbook")
             descricao = "Flipbook de VFX gerado por codigo"
+        elif tipo == "flipbook_ia":
+            imagem_bytes, status, seed = gerar_flipbook_ia(
+                prompt_usuario,
+                dados.get("efeito", "crescer"),
+                int(dados.get("grade", 4)),
+                dados.get("modelo", "flux"),
+                dados.get("seed")
+            )
+            if imagem_bytes is None:
+                return jsonify({"sucesso": False, "erro": f"A IA Pollinations falhou. Status: {status}"}), 500
+            nome = nome_unico("IA_VFX_FlipbookIA")
+            descricao = "Flipbook de VFX animado por codigo a partir de imagem de IA"
         else:
             imagem_bytes, status, seed = baixar_imagem_limpa(
                 prompt_usuario,

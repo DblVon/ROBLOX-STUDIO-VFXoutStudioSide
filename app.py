@@ -4,13 +4,12 @@ from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-# CONFIGURAÇÕES (Armazenadas de forma segura na nuvem)
+# CONFIGURAÇÃO DO ROBLOX (Armazenada de forma segura nas configurações do Render)
 ROBLOX_API_KEY = os.environ.get("ROBLOX_API_KEY")
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
 @app.route("/", methods=["GET"])
 def home():
-    return "Servidor de IA VFX do Roblox ativo e online!", 200
+    return "Servidor de IA VFX do Roblox ativo, online e GRATUITO!", 200
 
 @app.route("/gerar-textura", methods=["POST"])
 def gerar_textura():
@@ -21,34 +20,31 @@ def gerar_textura():
         return jsonify({"sucesso": False, "erro": "Prompt vazio"}), 400
 
     try:
-        # ---- PASSO 1: Chamar a IA para gerar a Imagem (Exemplo usando OpenAI DALL-E) ----
-        headers_ai = {"Authorization": f"Bearer {OPENAI_API_KEY}"}
-        payload_ai = {
-            "prompt": f"{prompt_usuario}, black background, texture map, tileable, video game vfx asset",
-            "n": 1,
-            "size": "512x512", # Tamanho ideal e econômico para VFX no Roblox
-            "response_format": "url"
-        }
+        # ---- PASSO 1: Chamar a IA Gratuita (Pollinations.ai) ----
+        # Formatamos o prompt para garantir que seja uma textura de VFX ideal
+        prompt_formatado = f"{prompt_usuario}, black background, texture map, video game vfx asset, square tileable"
         
-        resposta_ai = requests.post("https://openai.com", json=payload_ai, headers=headers_ai)
-        url_imagem = resposta_ai.json()['data'][0]['url']
+        # O Pollinations gera a imagem direto via URL estruturada
+        url_ia = f"https://pollinations.ai{requests.utils.quote(prompt_formatado)}?width=512&height=512&enhance=true&seed=42"
         
-        # Baixa a imagem gerada temporariamente na memória
-        imagem_bytes = requests.get(url_imagem).content
+        # Baixa os bytes da imagem criada pela IA
+        resposta_ia = requests.get(url_ia)
+        if resposta_ia.status_code != 200:
+            return jsonify({"sucesso": False, "erro": "A IA gratuita falhou em gerar a imagem."}), 500
+            
+        imagem_bytes = resposta_ia.content
 
         # ---- PASSO 2: Enviar a Imagem para o Roblox usando Open Cloud API ----
-        # O Roblox exige o envio de arquivos multipart para upload de Assets
         url_roblox_upload = "https://roblox.com"
         headers_roblox = {"x-api-key": ROBLOX_API_KEY}
         
-        # Dados necessários exigidos pelo protocolo do Roblox
         json_meta = {
             "assetType": "Decal",
             "displayName": "IA_VFX_Texture",
             "description": f"Gerado automaticamente por IA. Prompt: {prompt_usuario}",
             "creationContext": {
                 "creator": {
-                    "userId": "3410584211" # Insira o ID numérico da sua conta do Roblox
+                    "userId": "12345678"  # Opcional: Coloque o ID numérico da sua conta do Roblox se quiser associar diretamente
                 }
             }
         }
@@ -58,12 +54,11 @@ def gerar_textura():
             'fileContent': ('textura.png', imagem_bytes, 'image/png')
         }
 
-        # Envia para a Open Cloud do Roblox
+        # Envia a imagem para a nuvem do Roblox
         resposta_roblox = requests.post(url_roblox_upload, headers=headers_roblox, files=arquivos)
         
-        if resposta_roblox.status_code == 200 or resposta_roblox.status_code == 201:
+        if resposta_roblox.status_code in [200, 201]:
             dados_roblox = resposta_roblox.json()
-            # O Roblox retorna um operation ID ou diretamente o assetId se o processamento for imediato
             asset_id = dados_roblox.get("assetId")
             
             return jsonify({

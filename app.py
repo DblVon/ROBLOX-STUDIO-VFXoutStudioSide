@@ -4,6 +4,7 @@ import time
 import json
 import math
 import random
+import uuid
 import requests
 from io import BytesIO
 from PIL import Image, ImageDraw, ImageFilter
@@ -13,6 +14,7 @@ app = Flask(__name__)
 
 # CONFIGURAÇÃO DO ROBLOX
 ROBLOX_API_KEY = os.environ.get("ROBLOX_API_KEY")
+MODELOS_PERMITIDOS = ("flux", "turbo")
 
 def cor_hex(valor, padrao=(0, 200, 255)):
     try:
@@ -21,21 +23,28 @@ def cor_hex(valor, padrao=(0, 200, 255)):
     except Exception:
         return padrao
 
-def baixar_imagem_limpa(prompt_usuario):
+def nome_unico(base):
+    return f"{base}_{time.strftime('%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
+
+def baixar_imagem_limpa(prompt_usuario, modelo="flux", seed=None):
+    prompt_usuario = str(prompt_usuario).strip()[:300]
+    modelo = modelo if modelo in MODELOS_PERMITIDOS else "flux"
+    seed = int(seed) if seed not in (None, "") else random.randint(1, 999999)
+
     prompt_formatado = f"{prompt_usuario}, black background, texture map, video game vfx asset, square tileable, no text, no watermark"
-    url_ia = f"https://image.pollinations.ai/prompt/{requests.utils.quote(prompt_formatado)}?width=768&height=768&seed=42&nologo=true"
+    url_ia = f"https://image.pollinations.ai/prompt/{requests.utils.quote(prompt_formatado)}?width=768&height=768&seed={seed}&model={modelo}&nologo=true"
 
     resposta_ia = requests.get(url_ia, headers={"User-Agent": "Mozilla/5.0"}, timeout=60)
     if resposta_ia.status_code != 200:
         print(f"ERRO Pollinations: {resposta_ia.status_code} - {resposta_ia.text[:300]}", flush=True)
-        return None, resposta_ia.status_code
+        return None, resposta_ia.status_code, seed
 
     imagem = Image.open(BytesIO(resposta_ia.content)).convert("RGB")
     imagem = imagem.crop((128, 128, 640, 640))
 
     saida = BytesIO()
     imagem.save(saida, format="PNG")
-    return saida.getvalue(), 200
+    return saida.getvalue(), 200, seed
 
 def quadro_flare(t, tamanho, cor):
     centro = tamanho / 2
@@ -89,7 +98,6 @@ def quadro_faisca(t, tamanho, cor):
         x = centro + math.cos(ang) * dist
         y = centro + math.sin(ang) * dist
         r = max(1.5, tamanho / 40) * (1 + brilho)
-        c = tuple(int(255 * brilho) if i == 0 else int(v * brilho) for i, v in enumerate((255,) + tuple(cor[1:])))
         desenho.ellipse([x - r, y - r, x + r, y + r], fill=tuple(int(v * brilho) for v in cor))
         desenho.ellipse([x - r / 2, y - r / 2, x + r / 2, y + r / 2], fill=(int(255 * brilho),) * 3)
 
@@ -176,10 +184,16 @@ def preview():
         return jsonify({"sucesso": False, "erro": "Prompt vazio"}), 400
 
     try:
-        imagem_bytes, status = baixar_imagem_limpa(prompt_usuario)
+        imagem_bytes, status, seed = baixar_imagem_limpa(
+            prompt_usuario,
+            request.args.get("modelo", "flux"),
+            request.args.get("seed")
+        )
         if imagem_bytes is None:
             return jsonify({"sucesso": False, "erro": f"A IA Pollinations falhou. Status: {status}"}), 500
-        return Response(imagem_bytes, mimetype="image/png")
+        resposta = Response(imagem_bytes, mimetype="image/png")
+        resposta.headers["X-Seed"] = str(seed)
+        return resposta
     except Exception as e:
         print(f"ERRO interno: {str(e)}", flush=True)
         return jsonify({"sucesso": False, "erro": f"Erro interno no servidor Python: {str(e)}"}), 500
@@ -210,24 +224,29 @@ def gerar_textura():
         return jsonify({"sucesso": False, "erro": "ROBLOX_API_KEY nao configurada no servidor"}), 500
 
     try:
+        seed = None
         if tipo == "flipbook":
             estilo = dados.get("estilo", "flare")
             cor = cor_hex(dados.get("cor", "00c8ff"))
             grade = int(dados.get("grade", 4))
             imagem_bytes = gerar_flipbook(estilo, cor, grade)
-            nome = "IA_VFX_Flipbook"
+            nome = nome_unico("IA_VFX_Flipbook")
             descricao = "Flipbook de VFX gerado por codigo"
         else:
-            imagem_bytes, status = baixar_imagem_limpa(prompt_usuario)
+            imagem_bytes, status, seed = baixar_imagem_limpa(
+                prompt_usuario,
+                dados.get("modelo", "flux"),
+                dados.get("seed")
+            )
             if imagem_bytes is None:
                 return jsonify({"sucesso": False, "erro": f"A IA Pollinations falhou. Status: {status}"}), 500
-            nome = "IA_VFX_Texture"
+            nome = nome_unico("IA_VFX_Texture")
             descricao = "Textura de VFX gerada por IA"
 
         asset_id, erro = subir_roblox(imagem_bytes, nome, descricao)
 
         if asset_id:
-            return jsonify({"sucesso": True, "assetId": asset_id})
+            return jsonify({"sucesso": True, "assetId": asset_id, "nome": nome, "seed": seed})
         return jsonify({"sucesso": False, "erro": erro}), 500
 
     except Exception as e:

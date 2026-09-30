@@ -22,13 +22,18 @@ def gerar_textura():
     if not prompt_usuario:
         return jsonify({"sucesso": False, "erro": "Prompt vazio"}), 400
 
+    if not ROBLOX_API_KEY:
+        print("ERRO: ROBLOX_API_KEY nao configurada no Render", flush=True)
+        return jsonify({"sucesso": False, "erro": "ROBLOX_API_KEY nao configurada no servidor"}), 500
+
     try:
         # ---- PASSO 1: Baixando Imagem da IA (Pollinations) ----
         prompt_formatado = f"{prompt_usuario}, black background, texture map, video game vfx asset, square tileable"
         url_ia = f"https://image.pollinations.ai/prompt/{requests.utils.quote(prompt_formatado)}?width=512&height=512&seed=42"
         
-        resposta_ia = requests.get(url_ia, timeout=15)
+        resposta_ia = requests.get(url_ia, headers={"User-Agent": "Mozilla/5.0"}, timeout=60)
         if resposta_ia.status_code != 200:
+            print(f"ERRO Pollinations: {resposta_ia.status_code} - {resposta_ia.text[:300]}", flush=True)
             return jsonify({"sucesso": False, "erro": f"A IA Pollinations falhou. Status: {resposta_ia.status_code}"}), 500
             
         imagem_bytes = resposta_ia.content
@@ -53,9 +58,10 @@ def gerar_textura():
             'fileContent': ('textura.png', imagem_bytes, 'image/png')
         }
 
-        resposta_roblox = requests.post(url_roblox_upload, headers=headers_roblox, files=arquivos, timeout=20)
+        resposta_roblox = requests.post(url_roblox_upload, headers=headers_roblox, files=arquivos, timeout=30)
         
         if not (200 <= resposta_roblox.status_code < 300):
+            print(f"ERRO Roblox upload: {resposta_roblox.status_code} - {resposta_roblox.text}", flush=True)
             return jsonify({"sucesso": False, "erro": f"Roblox recusou o envio. Status: {resposta_roblox.status_code} - {resposta_roblox.text}"}), 500
             
         dados_operacao = resposta_roblox.json()
@@ -91,6 +97,7 @@ def gerar_textura():
             return jsonify({"sucesso": False, "erro": "O Roblox demorou para responder na fila de processamento."}), 500
 
     except Exception as e:
+        print(f"ERRO interno: {str(e)}", flush=True)
         return jsonify({"sucesso": False, "erro": f"Erro interno no servidor Python: {str(e)}"}), 500
 
 if __name__ == "__main__":

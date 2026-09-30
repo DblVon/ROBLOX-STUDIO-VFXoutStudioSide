@@ -3,16 +3,50 @@ import os
 import time
 import json
 import requests
-from flask import Flask, request, jsonify
+from io import BytesIO
+from PIL import Image
+from flask import Flask, request, jsonify, Response
 
 app = Flask(__name__)
 
 # CONFIGURAÇÃO DO ROBLOX
 ROBLOX_API_KEY = os.environ.get("ROBLOX_API_KEY")
 
+def baixar_imagem_limpa(prompt_usuario):
+    prompt_formatado = f"{prompt_usuario}, black background, texture map, video game vfx asset, square tileable, no text, no watermark"
+    url_ia = f"https://image.pollinations.ai/prompt/{requests.utils.quote(prompt_formatado)}?width=768&height=768&seed=42&nologo=true"
+
+    resposta_ia = requests.get(url_ia, headers={"User-Agent": "Mozilla/5.0"}, timeout=60)
+    if resposta_ia.status_code != 200:
+        print(f"ERRO Pollinations: {resposta_ia.status_code} - {resposta_ia.text[:300]}", flush=True)
+        return None, resposta_ia.status_code
+
+    imagem = Image.open(BytesIO(resposta_ia.content)).convert("RGB")
+    imagem = imagem.crop((128, 128, 640, 640))
+
+    saida = BytesIO()
+    imagem.save(saida, format="PNG")
+    return saida.getvalue(), 200
+
 @app.route("/", methods=["GET"])
 def home():
     return "Servidor de IA VFX do Roblox ativo, online e GRATUITO!", 200
+
+@app.route("/preview", methods=["GET"])
+def preview():
+    prompt_usuario = request.args.get("prompt")
+
+    if not prompt_usuario:
+        return jsonify({"sucesso": False, "erro": "Prompt vazio"}), 400
+
+    try:
+        imagem_bytes, status = baixar_imagem_limpa(prompt_usuario)
+        if imagem_bytes is None:
+            return jsonify({"sucesso": False, "erro": f"A IA Pollinations falhou. Status: {status}"}), 500
+        return Response(imagem_bytes, mimetype="image/png")
+    except Exception as e:
+        print(f"ERRO interno: {str(e)}", flush=True)
+        return jsonify({"sucesso": False, "erro": f"Erro interno no servidor Python: {str(e)}"}), 500
 
 @app.route("/gerar-textura", methods=["POST"])
 def gerar_textura():
@@ -28,15 +62,9 @@ def gerar_textura():
 
     try:
         # ---- PASSO 1: Baixando Imagem da IA (Pollinations) ----
-        prompt_formatado = f"{prompt_usuario}, black background, texture map, video game vfx asset, square tileable"
-        url_ia = f"https://image.pollinations.ai/prompt/{requests.utils.quote(prompt_formatado)}?width=512&height=512&seed=42"
-        
-        resposta_ia = requests.get(url_ia, headers={"User-Agent": "Mozilla/5.0"}, timeout=60)
-        if resposta_ia.status_code != 200:
-            print(f"ERRO Pollinations: {resposta_ia.status_code} - {resposta_ia.text[:300]}", flush=True)
-            return jsonify({"sucesso": False, "erro": f"A IA Pollinations falhou. Status: {resposta_ia.status_code}"}), 500
-            
-        imagem_bytes = resposta_ia.content
+        imagem_bytes, status = baixar_imagem_limpa(prompt_usuario)
+        if imagem_bytes is None:
+            return jsonify({"sucesso": False, "erro": f"A IA Pollinations falhou. Status: {status}"}), 500
 
         # ---- PASSO 2: Envio para a Assets API do Roblox ----
         url_roblox_upload = "https://apis.roblox.com/assets/v1/assets"
@@ -45,7 +73,7 @@ def gerar_textura():
         json_meta = {
             "assetType": "Decal",
             "displayName": "IA_VFX_Texture",
-            "description": f"Gerado por IA. Prompt: {prompt_usuario}",
+            "description": "Textura de VFX gerada por IA",
             "creationContext": {
                 "creator": {
                     "userId": "3410584211" # Seu ID de usuario

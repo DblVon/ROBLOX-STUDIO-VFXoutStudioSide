@@ -44,7 +44,7 @@ def gerar_textura():
             "description": f"Gerado automaticamente por IA. Prompt: {prompt_usuario}",
             "creationContext": {
                 "creator": {
-                    "userId": "12345678"  # Opcional: Coloque o ID numérico da sua conta do Roblox se quiser associar diretamente
+                    "userId": "3410584211"  # Opcional: Coloque o ID numérico da sua conta do Roblox se quiser associar diretamente
                 }
             }
         }
